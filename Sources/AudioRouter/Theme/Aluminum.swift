@@ -57,23 +57,19 @@ enum AluminumTexture {
             ctx.drawLinearGradient(g, start: from, end: to, options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
         }
 
-        // 1. Base: soft vertical falloff, light from above.
-        linear([(color(0.86, 1, tint: 0.008), 0), (color(0.78, 1, tint: 0.010), 0.55), (color(0.72, 1, tint: 0.012), 1)],
+        // 1. Base: an even tone with only a hint of light from above.
+        linear([(color(0.81, 1, tint: 0.010), 0), (color(0.78, 1, tint: 0.010), 1)],
                from: .zero, to: CGPoint(x: 0, y: size.height))
 
-        // 2. Soft satin sheen across the plate (bead-blasted metal scatters light, so keep it subtle).
-        linear([(color(1, 0), 0), (color(1, 0.10), 0.38), (color(1, 0.03), 0.55), (color(1, 0.07), 0.72), (color(1, 0), 1)],
-               from: CGPoint(x: 0, y: 0), to: CGPoint(x: size.width, y: size.height * 0.6))
-
-        // 3. Bead-blasted grain, MacBook style: fine, uniform, non-directional noise on every pixel,
-        //    plus a faint coarser mottling so it doesn't look like digital static.
+        // 2. Bead-blasted grain, MacBook style: fine, uniform, non-directional noise on every pixel,
+        //    plus very faint coarser mottling so it doesn't look like digital static.
         if let data = ctx.data {
             let px = data.bindMemory(to: UInt8.self, capacity: ctx.bytesPerRow * h)
             let row = ctx.bytesPerRow
             // coarse mottling: a small random grid, bilinearly interpolated
             let cell = 6, gw = w / cell + 2, gh = h / cell + 2
             var grid = [Float](repeating: 0, count: gw * gh)
-            for i in grid.indices { grid[i] = Float(rng.unit() - 0.5) * 7 }
+            for i in grid.indices { grid[i] = Float(rng.unit() - 0.5) * 2.5 }
             var seed = rng.next()
             for y in 0..<h {
                 let gy = y / cell, fy = Float(y % cell) / Float(cell)
@@ -85,7 +81,7 @@ enum AluminumTexture {
                     // xorshift per pixel; sum of two uniforms = soft triangular grain
                     seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17
                     let n1 = Float(seed & 0xFFFF) / 65535, n2 = Float((seed >> 16) & 0xFFFF) / 65535
-                    let grain = (n1 + n2 - 1) * 15 + mottle
+                    let grain = (n1 + n2 - 1) * 13 + mottle
                     let o = y * row + x * 4
                     for ch in 0..<3 {
                         px[o + ch] = UInt8(max(0, min(255, Float(px[o + ch]) + grain)))
@@ -94,10 +90,10 @@ enum AluminumTexture {
             }
         }
 
-        // 4. Scratches: a thin dark groove with a bright lip next to it. Mostly short, a few long ones,
+        // 3. Scratches: a thin dark groove with a bright lip next to it. Mostly short, a few long ones,
         //    some gently curved.
         ctx.setLineCap(.round)
-        for i in 0..<420 {
+        for i in 0..<260 {
             let start = CGPoint(x: rng.range(-60...(size.width + 60)), y: rng.range(-60...(size.height + 60)))
             let short = rng.unit()
             let len = 6 + pow(short, 2.6) * (i % 9 == 0 ? 520 : 170)
@@ -118,15 +114,8 @@ enum AluminumTexture {
                 ctx.addQuadCurve(to: CGPoint(x: end.x + ox, y: end.y + oy), control: CGPoint(x: mid.x + ox, y: mid.y + oy))
                 ctx.strokePath()
             }
-            stroke(0, color(0.25, 0.20 * depth), width)                 // groove
-            stroke(width * 0.9, color(1, 0.55 * depth), width * 0.8)     // catching the light
-        }
-
-        // 5. Gentle vignette toward the edges.
-        if let g = CGGradient(colorsSpace: space, colors: [color(0, 0), color(0, 0.10)] as CFArray, locations: [0.55, 1]) {
-            let c = CGPoint(x: size.width * 0.4, y: size.height * 0.25)
-            ctx.drawRadialGradient(g, startCenter: c, startRadius: 0, endCenter: c, endRadius: max(size.width, size.height) * 0.75,
-                                   options: [.drawsAfterEndLocation])
+            stroke(0, color(0.25, 0.13 * depth), width)                 // groove
+            stroke(width * 0.9, color(1, 0.38 * depth), width * 0.8)     // catching the light
         }
 
         guard let cg = ctx.makeImage() else { return NSImage(size: size) }

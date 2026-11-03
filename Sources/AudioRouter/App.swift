@@ -270,6 +270,12 @@ struct ChainSection: View {
             .popover(isPresented: $showAdd.value, arrowEdge: .bottom) {
                 AddEffectPopover { showAdd.value = false }.environmentObject(router)
             }
+            .onAppear {
+                // debug / automation: open the Add Effect popover at launch
+                if ProcessInfo.processInfo.arguments.contains("--add-effect") {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { showAdd.value = true }
+                }
+            }
         } content: {
             if router.slots.isEmpty {
                 Text("add an Audio Unit effect to start processing")
@@ -393,14 +399,94 @@ struct SlotRow: View {
 struct AddEffectPopover: View {
     @EnvironmentObject private var router: AudioRouter
     @StateObject private var query = LocalState("")
+    /// Vendor filter (nil = all); remembered between openings.
+    @StateObject private var vendor = LocalState<String?>(UserDefaults.standard.string(forKey: "effectVendor"))
+    @StateObject private var showVendors = LocalState(false)
     let dismiss: () -> Void
+
+    /// All vendors with their effect counts, alphabetically.
+    private var vendors: [(name: String, count: Int)] {
+        Dictionary(grouping: router.availableEffects, by: \.manufacturerName)
+            .map { ($0.key, $0.value.count) }
+            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    /// The active vendor filter, ignored if that vendor has no effects installed any more.
+    private var activeVendor: String? {
+        guard let v = vendor.value, vendors.contains(where: { $0.name == v }) else { return nil }
+        return v
+    }
 
     private var groups: [(String, [AVAudioUnitComponent])] {
         let q = query.value.trimmingCharacters(in: .whitespaces).lowercased()
+        let v = activeVendor
         let matches = router.availableEffects.filter {
-            q.isEmpty || $0.name.lowercased().contains(q) || $0.manufacturerName.lowercased().contains(q)
+            (v == nil || $0.manufacturerName == v)
+                && (q.isEmpty || $0.name.lowercased().contains(q) || $0.manufacturerName.lowercased().contains(q))
         }
-        return Dictionary(grouping: matches, by: \.manufacturerName).sorted { $0.key < $1.key }
+        return Dictionary(grouping: matches, by: \.manufacturerName)
+            .sorted { $0.key.localizedCaseInsensitiveCompare($1.key) == .orderedAscending }
+    }
+
+    private func setVendor(_ v: String?) {
+        vendor.value = v
+        UserDefaults.standard.set(v, forKey: "effectVendor")
+        showVendors.value = false
+    }
+
+    /// Dropdown key: "Vendor: All ▾" → list of vendors with counts.
+    private var vendorPicker: some View {
+        HStack(spacing: 6) {
+            Text("VENDOR").font(Theme.mono(9.5, .semibold)).tracking(1.2).foregroundStyle(Theme.textDim)
+            Button { showVendors.value.toggle() } label: {
+                HStack(spacing: 6) {
+                    Text(activeVendor ?? "All vendors").lineLimit(1).truncationMode(.middle)
+                    Spacer(minLength: 4)
+                    Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold))
+                }
+                .font(Theme.mono(11, .medium))
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(RubberButtonStyle(isOn: activeVendor != nil, radius: 6,
+                                           padding: EdgeInsets(top: 4, leading: 9, bottom: 4, trailing: 9)))
+            .popover(isPresented: $showVendors.value, arrowEdge: .bottom) { vendorList }
+            if activeVendor != nil {
+                IconKey(symbol: "xmark", help: "Show all vendors") { setVendor(nil) }
+            }
+        }
+    }
+
+    private var vendorList: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 4) {
+                vendorRow("All vendors", router.availableEffects.count, activeVendor == nil) { setVendor(nil) }
+                Rectangle().fill(Theme.line(0.12)).frame(height: 1).padding(.vertical, 3)
+                ForEach(vendors, id: \.name) { v in
+                    vendorRow(v.name, v.count, activeVendor == v.name) { setVendor(v.name) }
+                }
+            }
+            .padding(10)
+        }
+        .scrollIndicators(.automatic)
+        .frame(width: 260)
+        .frame(maxHeight: 360)
+        .fixedSize(horizontal: false, vertical: true)
+        .font(Theme.mono(11.5))
+        .preferredColorScheme(Theme.colorScheme)
+    }
+
+    private func vendorRow(_ name: String, _ count: Int, _ isOn: Bool, _ action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 7) {
+                GlowCheckbox(isOn: isOn, size: 13)
+                Text(name).lineLimit(1).truncationMode(.middle).glowText(isOn)
+                Spacer(minLength: 6)
+                Text("\(count)").font(Theme.mono(10)).monospacedDigit().foregroundStyle(Theme.textFaint)
+            }
+            .padding(.vertical, 2)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 
     var body: some View {
@@ -416,13 +502,20 @@ struct AddEffectPopover: View {
             .background(RoundedRectangle(cornerRadius: 6).fill(Theme.well(0.3)))
             .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.glow.opacity(0.6)))
 
+            vendorPicker
+
             ScrollView {
                 VStack(alignment: .leading, spacing: 5) {
                     ForEach(groups, id: \.0) { maker, components in
-                        Text(maker.uppercased())
-                            .font(Theme.mono(9.5, .semibold)).tracking(1.2)
-                            .foregroundStyle(Theme.textDim)
-                            .padding(.top, 6)
+                        // click a vendor heading to show only that vendor
+                        Button { setVendor(activeVendor == nil ? maker : nil) } label: {
+                            Text(maker.uppercased())
+                                .font(Theme.mono(9.5, .semibold)).tracking(1.2)
+                                .foregroundStyle(Theme.textDim)
+                        }
+                        .buttonStyle(.plain)
+                        .help(activeVendor == nil ? "Show only \(maker)" : "Show all vendors")
+                        .padding(.top, 6)
                         ForEach(components, id: \.self) { c in
                             Button {
                                 router.addEffect(c)
@@ -434,7 +527,8 @@ struct AddEffectPopover: View {
                         }
                     }
                     if groups.isEmpty {
-                        Text("no matching effects").foregroundStyle(Theme.textFaint).padding(.top, 8)
+                        Text(activeVendor == nil ? "no matching effects" : "no matching effects from \(activeVendor!)")
+                            .foregroundStyle(Theme.textFaint).padding(.top, 8)
                     }
                 }
                 .padding(.trailing, 4)
