@@ -210,12 +210,23 @@ extension View {
                 }
                 WindowConfigurator(skin: ThemeStore.skin).frame(width: 0, height: 0)
             }
+            .windowDraggable()
             // Reach under the transparent title bar even when the root view is fixed-size
             // and laid out below it (simple mode), where ignoresSafeArea can't stretch it.
             .padding(.top, -titleBarReach)
             .ignoresSafeArea()
         }
         .preferredColorScheme(Theme.colorScheme)
+    }
+}
+
+extension View {
+    /// Dragging this view (a background) moves the window. Controls on top keep their own clicks and
+    /// drags, because a background only receives events nothing in front of it handled.
+    func windowDraggable() -> some View {
+        contentShape(Rectangle())
+            .gesture(WindowDragGesture())
+            .allowsWindowActivationEvents(true)
     }
 }
 
@@ -545,15 +556,18 @@ struct Panel<Content: View, Accessory: View>: View {
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .background {
             let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
-            if Theme.isLight {
-                // machined recess: darker top edge, bright bottom lip
-                shape.fill(Color.black.opacity(0.045))
-                    .overlay(shape.strokeBorder(LinearGradient(colors: [Color.black.opacity(0.22), Color.white.opacity(0.75)],
-                                                               startPoint: .top, endPoint: .bottom), lineWidth: 1))
-            } else {
-                shape.fill(Color.black.opacity(0.22))
-                    .overlay(shape.strokeBorder(Color.white.opacity(0.07), lineWidth: 1))
+            Group {
+                if Theme.isLight {
+                    // machined recess: darker top edge, bright bottom lip
+                    shape.fill(Color.black.opacity(0.045))
+                        .overlay(shape.strokeBorder(LinearGradient(colors: [Color.black.opacity(0.22), Color.white.opacity(0.75)],
+                                                                   startPoint: .top, endPoint: .bottom), lineWidth: 1))
+                } else {
+                    shape.fill(Color.black.opacity(0.22))
+                        .overlay(shape.strokeBorder(Color.white.opacity(0.07), lineWidth: 1))
+                }
             }
+            .windowDraggable()
         }
     }
 }

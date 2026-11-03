@@ -282,7 +282,7 @@ struct ChainSection: View {
                     .font(Theme.mono(11))
                     .foregroundStyle(Theme.textFaint)
                     .frame(maxWidth: .infinity, minHeight: 64, idealHeight: 64, maxHeight: .infinity)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(Theme.well(0.28)))
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Theme.well(0.28)).windowDraggable())
             } else {
                 ScrollView {
                     VStack(spacing: 6) {
@@ -304,7 +304,7 @@ struct ChainSection: View {
                 .onPreferenceChange(ListHeightKey.self) { listHeight.value = $0 }
                 .scrollIndicators(.automatic)
                 .frame(minHeight: 64, idealHeight: min(max(listHeight.value, 64), maxListHeight), maxHeight: .infinity)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Theme.well(0.28)))
+                .background(RoundedRectangle(cornerRadius: 8).fill(Theme.well(0.28)).windowDraggable())
             }
         }
         .frame(maxHeight: .infinity)
@@ -399,52 +399,86 @@ struct SlotRow: View {
 struct AddEffectPopover: View {
     @EnvironmentObject private var router: AudioRouter
     @StateObject private var query = LocalState("")
-    /// Selected vendor tags (empty = all vendors); remembered between openings.
-    @StateObject private var selected = LocalState(Set(UserDefaults.standard.stringArray(forKey: "effectVendors") ?? []))
+    // Tag selections (empty = no filter); remembered between openings.
+    @StateObject private var vendors = LocalState(Self.load("effectVendors"))
+    @StateObject private var categories = LocalState(Self.load("effectCategories"))
+    @StateObject private var tags = LocalState(Self.load("effectTags"))
     let dismiss: () -> Void
 
-    /// All vendors with their effect counts, alphabetically.
-    private var vendors: [(name: String, count: Int)] {
-        Dictionary(grouping: router.availableEffects, by: \.manufacturerName)
-            .map { ($0.key, $0.value.count) }
-            .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    private static func load(_ key: String) -> Set<String> { Set(UserDefaults.standard.stringArray(forKey: key) ?? []) }
+
+    /// One installed effect with everything the filters look at, computed once per render.
+    private struct Entry {
+        let component: AVAudioUnitComponent
+        let vendor: String
+        let categories: Set<String>
+        let tags: Set<String>
+        let searchText: String
     }
 
-    /// The selected vendors that still have effects installed (empty = all).
-    private var active: Set<String> {
-        selected.value.intersection(vendors.map(\.name))
+    private enum Facet { case vendor, category, tag }
+
+    private var entries: [Entry] {
+        router.availableEffects.map { c in
+            Entry(component: c, vendor: c.manufacturerName,
+                  categories: Set(EffectCategory.categories(for: c).map(\.rawValue)),
+                  tags: Set(EffectTags.tags(for: c)),
+                  searchText: (c.name + " " + c.manufacturerName).lowercased())
+        }
+    }
+
+    /// Does the entry pass every filter except `skipping` (used for the counts on that facet's tags)?
+    private func passes(_ e: Entry, skipping: Facet? = nil) -> Bool {
+        let q = query.value.trimmingCharacters(in: .whitespaces).lowercased()
+        if !q.isEmpty && !e.searchText.contains(q) { return false }
+        if skipping != .vendor, !vendors.value.isEmpty, !vendors.value.contains(e.vendor) { return false }
+        if skipping != .category, !categories.value.isEmpty, categories.value.isDisjoint(with: e.categories) { return false }
+        if skipping != .tag, !tags.value.isEmpty, tags.value.isDisjoint(with: e.tags) { return false }
+        return true
     }
 
     private var groups: [(String, [AVAudioUnitComponent])] {
-        let q = query.value.trimmingCharacters(in: .whitespaces).lowercased()
-        let v = active
-        let matches = router.availableEffects.filter {
-            (v.isEmpty || v.contains($0.manufacturerName))
-                && (q.isEmpty || $0.name.lowercased().contains(q) || $0.manufacturerName.lowercased().contains(q))
-        }
+        let matches = entries.filter { passes($0) }.map(\.component)
         return Dictionary(grouping: matches, by: \.manufacturerName)
             .sorted { $0.key.localizedCaseInsensitiveCompare($1.key) == .orderedAscending }
     }
 
-    private func setVendors(_ v: Set<String>) {
-        selected.value = v
-        UserDefaults.standard.set(Array(v).sorted(), forKey: "effectVendors")
+    private var anyFilter: Bool { !vendors.value.isEmpty || !categories.value.isEmpty || !tags.value.isEmpty }
+
+    private func store(_ state: LocalState<Set<String>>, _ key: String, _ value: Set<String>) {
+        state.value = value
+        UserDefaults.standard.set(Array(value).sorted(), forKey: key)
     }
 
-    private func toggle(_ vendor: String) {
-        var v = active
-        if v.contains(vendor) { v.remove(vendor) } else { v.insert(vendor) }
-        setVendors(v)
+    private func toggle(_ state: LocalState<Set<String>>, _ key: String, _ item: String) {
+        var v = state.value
+        if v.contains(item) { v.remove(item) } else { v.insert(item) }
+        store(state, key, v)
     }
 
-    /// Vendor tags: click to include a vendor (several can be on); "All" clears the filter.
-    private var vendorTags: some View {
-        FlowLayout(spacing: 5, lineSpacing: 5) {
-            tag("All", router.availableEffects.count, active.isEmpty) { setVendors([]) }
-                .help("Show every vendor")
-            ForEach(vendors, id: \.name) { v in
-                tag(v.name, v.count, active.contains(v.name)) { toggle(v.name) }
-                    .help(active.contains(v.name) ? "Hide \(v.name)" : "Show \(v.name)")
+    /// A labelled row of tags. Values come from all installed effects; each count is how many effects
+    /// would match with that tag on, given the other filters and the search.
+    @ViewBuilder
+    private func facetRow(_ title: String, _ facet: Facet, values: [String],
+                          _ state: LocalState<Set<String>>, _ key: String,
+                          value: @escaping (Entry) -> Set<String>) -> some View {
+        if !values.isEmpty {
+            let pool = entries.filter { passes($0, skipping: facet) }
+            // drop selections that no longer exist (plug-in uninstalled)
+            let selected = state.value.intersection(values)
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text(title)
+                    .font(Theme.mono(9, .semibold)).tracking(1.1)
+                    .foregroundStyle(Theme.textDim)
+                    .frame(width: 62, alignment: .leading)
+                FlowLayout(spacing: 5, lineSpacing: 5) {
+                    tag("All", pool.count, selected.isEmpty) { store(state, key, []) }
+                    ForEach(values, id: \.self) { v in
+                        let n = pool.filter { value($0).contains(v) }.count
+                        tag(v, n, selected.contains(v)) { toggle(state, key, v) }
+                            .opacity(n == 0 && !selected.contains(v) ? 0.45 : 1)
+                    }
+                }
             }
         }
     }
@@ -457,7 +491,20 @@ struct AddEffectPopover: View {
             }
             .font(Theme.mono(10.5, .medium))
         }
-        .buttonStyle(RubberButtonStyle(isOn: isOn, radius: 10, padding: EdgeInsets(top: 2, leading: 8, bottom: 2, trailing: 8)))
+        .buttonStyle(RubberButtonStyle(isOn: isOn, radius: 10, padding: EdgeInsets(top: 2, leading: 7, bottom: 2, trailing: 7)))
+    }
+
+    private var filters: some View {
+        let all = entries
+        let vendorNames = Set(all.map(\.vendor)).sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+        let present = Set(all.flatMap(\.categories))
+        let categoryNames = EffectCategory.allCases.map(\.rawValue).filter(present.contains)   // fixed order
+        let tagNames = Set(all.flatMap(\.tags)).sorted { $0.localizedCaseInsensitiveCompare($1) == .orderedAscending }
+        return VStack(alignment: .leading, spacing: 7) {
+            facetRow("VENDOR", .vendor, values: vendorNames, vendors, "effectVendors") { [$0.vendor] }
+            facetRow("CATEGORY", .category, values: categoryNames, categories, "effectCategories") { $0.categories }
+            facetRow("TAGS", .tag, values: tagNames, tags, "effectTags") { $0.tags }
+        }
     }
 
     var body: some View {
@@ -473,19 +520,20 @@ struct AddEffectPopover: View {
             .background(RoundedRectangle(cornerRadius: 6).fill(Theme.well(0.3)))
             .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.glow.opacity(0.6)))
 
-            vendorTags
+            filters
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 5) {
                     ForEach(groups, id: \.0) { maker, components in
                         // click a vendor heading to show only that vendor
-                        Button { setVendors(active == [maker] ? [] : [maker]) } label: {
+                        let only = vendors.value == [maker]
+                        Button { store(vendors, "effectVendors", only ? [] : [maker]) } label: {
                             Text(maker.uppercased())
                                 .font(Theme.mono(9.5, .semibold)).tracking(1.2)
                                 .foregroundStyle(Theme.textDim)
                         }
                         .buttonStyle(.plain)
-                        .help(active == [maker] ? "Show all vendors" : "Show only \(maker)")
+                        .help(only ? "Show all vendors" : "Show only \(maker)")
                         .padding(.top, 6)
                         ForEach(components, id: \.self) { c in
                             Button {
@@ -498,8 +546,17 @@ struct AddEffectPopover: View {
                         }
                     }
                     if groups.isEmpty {
-                        Text(active.isEmpty ? "no matching effects" : "no matching effects from the selected vendors")
-                            .foregroundStyle(Theme.textFaint).padding(.top, 8)
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("no matching effects").foregroundStyle(Theme.textFaint)
+                            if anyFilter {
+                                MiniButton("Clear filters") {
+                                    store(vendors, "effectVendors", [])
+                                    store(categories, "effectCategories", [])
+                                    store(tags, "effectTags", [])
+                                }
+                            }
+                        }
+                        .padding(.top, 8)
                     }
                 }
                 .padding(.trailing, 4)
@@ -507,7 +564,7 @@ struct AddEffectPopover: View {
             .scrollIndicators(.never)
         }
         .padding(12)
-        .frame(width: 340, height: 460)
+        .frame(width: 400, height: 560)
         .font(Theme.mono(11.5))
         .preferredColorScheme(Theme.colorScheme)
     }

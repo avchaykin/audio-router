@@ -29,7 +29,12 @@ Typical uses:
   - Any other input device: a microphone, an audio interface, BlackHole, and so on.
 - **Output:** System Default or a specific device. Capture is clocked from the output device through a private aggregate device with drift compensation, so input and output never drift apart.
 - **Effect chain:**
-  - Add any installed AU effect or music effect. The picker has a search field and vendor tags: turn on one or more vendors to narrow the list, or click a vendor heading to show only that vendor.
+  - Add any installed AU effect or music effect. The picker has a search field and three rows of filter tags:
+    - **Vendor.**
+    - **Category** (Dynamics, EQ, Filter, Delay, Reverb, Distortion, Modulation, Pitch, Preamp, Creative, Utility). It comes from the plug-in's own tags where it has them, otherwise from its name, so vendors that declare no tags (e.g. Arturia) are covered too.
+    - **Tags** the plug-ins declare, plus any you've added in macOS.
+
+    Several tags in a row combine with "or", the rows combine with "and", and each count shows how many effects that tag would leave.
   - Reorder by dragging or with ▲/▼.
   - Bypass an effect with its checkbox, or remove it.
   - Open an effect's own UI with **Edit** or a double-click. Plug-ins without a UI get a generic parameter view.
@@ -37,6 +42,7 @@ Typical uses:
 - **Dry/Wet mix:** blends the unprocessed signal with the processed one. The dry path is delayed by the plug-ins' reported latency, so the two stay sample-aligned and there is no comb filtering.
 - **Meters and gain:** In/Out LED peak meters and an output gain control from −∞ to +6 dB.
 - **Remembers everything:** the chain, each plug-in's settings, the input and output choices, and the mix are restored on the next launch.
+- **Moves from anywhere:** drag the window by any free area, not just the top edge.
 - **Follows the system:** reacts to changes of the default output device and to devices being plugged in or unplugged.
 - **Latency settings** (⌘,):
   - Sample rate, set on the output device.
@@ -120,6 +126,7 @@ process tap / input device ─▶ private aggregate device IOProc ─▶ lock-fr
 ```
 Sources/AudioRouter/
   App.swift                  app entry, main window and its sections
+  EffectCatalog.swift        effect categories and tags for the picker
   AudioRouter.swift          engine graph, effect chain, devices, settings, persistence
   AudioCapture.swift         process tap + private aggregate device + IOProc
   RingBuffer.swift           lock-free stereo ring (wet and aligned dry readers)
