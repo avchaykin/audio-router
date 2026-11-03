@@ -399,9 +399,8 @@ struct SlotRow: View {
 struct AddEffectPopover: View {
     @EnvironmentObject private var router: AudioRouter
     @StateObject private var query = LocalState("")
-    /// Vendor filter (nil = all); remembered between openings.
-    @StateObject private var vendor = LocalState<String?>(UserDefaults.standard.string(forKey: "effectVendor"))
-    @StateObject private var showVendors = LocalState(false)
+    /// Selected vendor tags (empty = all vendors); remembered between openings.
+    @StateObject private var selected = LocalState(Set(UserDefaults.standard.stringArray(forKey: "effectVendors") ?? []))
     let dismiss: () -> Void
 
     /// All vendors with their effect counts, alphabetically.
@@ -411,82 +410,54 @@ struct AddEffectPopover: View {
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
-    /// The active vendor filter, ignored if that vendor has no effects installed any more.
-    private var activeVendor: String? {
-        guard let v = vendor.value, vendors.contains(where: { $0.name == v }) else { return nil }
-        return v
+    /// The selected vendors that still have effects installed (empty = all).
+    private var active: Set<String> {
+        selected.value.intersection(vendors.map(\.name))
     }
 
     private var groups: [(String, [AVAudioUnitComponent])] {
         let q = query.value.trimmingCharacters(in: .whitespaces).lowercased()
-        let v = activeVendor
+        let v = active
         let matches = router.availableEffects.filter {
-            (v == nil || $0.manufacturerName == v)
+            (v.isEmpty || v.contains($0.manufacturerName))
                 && (q.isEmpty || $0.name.lowercased().contains(q) || $0.manufacturerName.lowercased().contains(q))
         }
         return Dictionary(grouping: matches, by: \.manufacturerName)
             .sorted { $0.key.localizedCaseInsensitiveCompare($1.key) == .orderedAscending }
     }
 
-    private func setVendor(_ v: String?) {
-        vendor.value = v
-        UserDefaults.standard.set(v, forKey: "effectVendor")
-        showVendors.value = false
+    private func setVendors(_ v: Set<String>) {
+        selected.value = v
+        UserDefaults.standard.set(Array(v).sorted(), forKey: "effectVendors")
     }
 
-    /// Dropdown key: "Vendor: All ▾" → list of vendors with counts.
-    private var vendorPicker: some View {
-        HStack(spacing: 6) {
-            Text("VENDOR").font(Theme.mono(9.5, .semibold)).tracking(1.2).foregroundStyle(Theme.textDim)
-            Button { showVendors.value.toggle() } label: {
-                HStack(spacing: 6) {
-                    Text(activeVendor ?? "All vendors").lineLimit(1).truncationMode(.middle)
-                    Spacer(minLength: 4)
-                    Image(systemName: "chevron.down").font(.system(size: 8, weight: .bold))
-                }
-                .font(Theme.mono(11, .medium))
-                .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(RubberButtonStyle(isOn: activeVendor != nil, radius: 6,
-                                           padding: EdgeInsets(top: 4, leading: 9, bottom: 4, trailing: 9)))
-            .popover(isPresented: $showVendors.value, arrowEdge: .bottom) { vendorList }
-            if activeVendor != nil {
-                IconKey(symbol: "xmark", help: "Show all vendors") { setVendor(nil) }
+    private func toggle(_ vendor: String) {
+        var v = active
+        if v.contains(vendor) { v.remove(vendor) } else { v.insert(vendor) }
+        setVendors(v)
+    }
+
+    /// Vendor tags: click to include a vendor (several can be on); "All" clears the filter.
+    private var vendorTags: some View {
+        FlowLayout(spacing: 5, lineSpacing: 5) {
+            tag("All", router.availableEffects.count, active.isEmpty) { setVendors([]) }
+                .help("Show every vendor")
+            ForEach(vendors, id: \.name) { v in
+                tag(v.name, v.count, active.contains(v.name)) { toggle(v.name) }
+                    .help(active.contains(v.name) ? "Hide \(v.name)" : "Show \(v.name)")
             }
         }
     }
 
-    private var vendorList: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 4) {
-                vendorRow("All vendors", router.availableEffects.count, activeVendor == nil) { setVendor(nil) }
-                Rectangle().fill(Theme.line(0.12)).frame(height: 1).padding(.vertical, 3)
-                ForEach(vendors, id: \.name) { v in
-                    vendorRow(v.name, v.count, activeVendor == v.name) { setVendor(v.name) }
-                }
-            }
-            .padding(10)
-        }
-        .scrollIndicators(.automatic)
-        .frame(width: 260)
-        .frame(maxHeight: 360)
-        .fixedSize(horizontal: false, vertical: true)
-        .font(Theme.mono(11.5))
-        .preferredColorScheme(Theme.colorScheme)
-    }
-
-    private func vendorRow(_ name: String, _ count: Int, _ isOn: Bool, _ action: @escaping () -> Void) -> some View {
+    private func tag(_ name: String, _ count: Int, _ isOn: Bool, _ action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            HStack(spacing: 7) {
-                GlowCheckbox(isOn: isOn, size: 13)
-                Text(name).lineLimit(1).truncationMode(.middle).glowText(isOn)
-                Spacer(minLength: 6)
-                Text("\(count)").font(Theme.mono(10)).monospacedDigit().foregroundStyle(Theme.textFaint)
+            HStack(spacing: 4) {
+                Text(name).lineLimit(1)
+                Text("\(count)").font(Theme.mono(9)).monospacedDigit().opacity(0.6)
             }
-            .padding(.vertical, 2)
-            .contentShape(Rectangle())
+            .font(Theme.mono(10.5, .medium))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(RubberButtonStyle(isOn: isOn, radius: 10, padding: EdgeInsets(top: 2, leading: 8, bottom: 2, trailing: 8)))
     }
 
     var body: some View {
@@ -502,19 +473,19 @@ struct AddEffectPopover: View {
             .background(RoundedRectangle(cornerRadius: 6).fill(Theme.well(0.3)))
             .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.glow.opacity(0.6)))
 
-            vendorPicker
+            vendorTags
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 5) {
                     ForEach(groups, id: \.0) { maker, components in
                         // click a vendor heading to show only that vendor
-                        Button { setVendor(activeVendor == nil ? maker : nil) } label: {
+                        Button { setVendors(active == [maker] ? [] : [maker]) } label: {
                             Text(maker.uppercased())
                                 .font(Theme.mono(9.5, .semibold)).tracking(1.2)
                                 .foregroundStyle(Theme.textDim)
                         }
                         .buttonStyle(.plain)
-                        .help(activeVendor == nil ? "Show only \(maker)" : "Show all vendors")
+                        .help(active == [maker] ? "Show all vendors" : "Show only \(maker)")
                         .padding(.top, 6)
                         ForEach(components, id: \.self) { c in
                             Button {
@@ -527,7 +498,7 @@ struct AddEffectPopover: View {
                         }
                     }
                     if groups.isEmpty {
-                        Text(activeVendor == nil ? "no matching effects" : "no matching effects from \(activeVendor!)")
+                        Text(active.isEmpty ? "no matching effects" : "no matching effects from the selected vendors")
                             .foregroundStyle(Theme.textFaint).padding(.top, 8)
                     }
                 }
@@ -539,6 +510,47 @@ struct AddEffectPopover: View {
         .frame(width: 340, height: 460)
         .font(Theme.mono(11.5))
         .preferredColorScheme(Theme.colorScheme)
+    }
+}
+
+/// Lays children out left to right, wrapping onto new lines (tag clouds).
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 6
+    var lineSpacing: CGFloat = 6
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let rows = arrange(width: proposal.width ?? .infinity, subviews)
+        return CGSize(width: proposal.width ?? rows.map(\.width).max() ?? 0,
+                      height: rows.last.map { $0.y + $0.height } ?? 0)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        for row in arrange(width: bounds.width, subviews) {
+            for (index, x) in row.items {
+                subviews[index].place(at: CGPoint(x: bounds.minX + x, y: bounds.minY + row.y), proposal: .unspecified)
+            }
+        }
+    }
+
+    private struct Row { var items: [(Int, CGFloat)] = []; var y: CGFloat = 0; var width: CGFloat = 0; var height: CGFloat = 0 }
+
+    private func arrange(width: CGFloat, _ subviews: Subviews) -> [Row] {
+        var rows: [Row] = [Row()]
+        for (i, view) in subviews.enumerated() {
+            let size = view.sizeThatFits(.unspecified)
+            var row = rows[rows.count - 1]
+            if !row.items.isEmpty && row.width + spacing + size.width > width {
+                let y = row.y + row.height + lineSpacing
+                rows.append(Row(y: y))
+                row = rows[rows.count - 1]
+            }
+            let x = row.items.isEmpty ? 0 : row.width + spacing
+            row.items.append((i, x))
+            row.width = x + size.width
+            row.height = max(row.height, size.height)
+            rows[rows.count - 1] = row
+        }
+        return rows
     }
 }
 

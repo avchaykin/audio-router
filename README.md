@@ -29,7 +29,7 @@ Typical uses:
   - Any other input device: a microphone, an audio interface, BlackHole, and so on.
 - **Output:** System Default or a specific device. Capture is clocked from the output device through a private aggregate device with drift compensation, so input and output never drift apart.
 - **Effect chain:**
-  - Add any installed AU effect or music effect. The picker has a search field and a vendor filter; click a vendor heading to show only that vendor.
+  - Add any installed AU effect or music effect. The picker has a search field and vendor tags: turn on one or more vendors to narrow the list, or click a vendor heading to show only that vendor.
   - Reorder by dragging or with ▲/▼.
   - Bypass an effect with its checkbox, or remove it.
   - Open an effect's own UI with **Edit** or a double-click. Plug-ins without a UI get a generic parameter view.
