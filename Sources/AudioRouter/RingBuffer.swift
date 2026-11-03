@@ -22,9 +22,13 @@ final class StereoRingBuffer: @unchecked Sendable {
     private static let unsynced = Int.min
 
     /// Frames buffered before playback starts (latency vs. dropout safety).
-    let targetFill: Int
+    /// Change only while stopped (with `configure`).
+    private(set) var targetFill: Int
     /// If more than this is buffered, the reader skips ahead to keep latency low.
-    let maxFill: Int
+    private(set) var maxFill: Int
+    /// Glitches since `reset()`: underruns (ran dry) and skips (too much buffered, jumped ahead).
+    private let underrunCount = Atomic<Int>(0)
+    private let skipCount = Atomic<Int>(0)
     /// Already-played frames the writer must keep intact for the dry reader.
     let history: Int
 
@@ -50,7 +54,18 @@ final class StereoRingBuffer: @unchecked Sendable {
     }
 
     /// Call only while neither producer nor consumers are running.
+    func configure(targetFill: Int, maxFill: Int) {
+        self.targetFill = max(16, min(targetFill, history / 2))
+        self.maxFill = max(self.targetFill + 64, min(maxFill, history / 2))
+    }
+
+    var underruns: Int { underrunCount.load(ordering: .relaxed) }
+    var skips: Int { skipCount.load(ordering: .relaxed) }
+
+    /// Call only while neither producer nor consumers are running.
     func reset() {
+        underrunCount.store(0, ordering: .relaxed)
+        skipCount.store(0, ordering: .relaxed)
         writeIndex.store(0, ordering: .sequentiallyConsistent)
         readIndex.store(0, ordering: .sequentiallyConsistent)
         offset.store(Self.unsynced, ordering: .sequentiallyConsistent)
@@ -116,6 +131,7 @@ final class StereoRingBuffer: @unchecked Sendable {
         if available > maxFill {          // too much latency accumulated: skip ahead
             r = w - targetFill
             available = targetFill
+            if primed { skipCount.add(1, ordering: .relaxed) }
         }
         if !primed {
             guard available >= targetFill else {
@@ -135,6 +151,7 @@ final class StereoRingBuffer: @unchecked Sendable {
             (outL + toRead).update(repeating: 0, count: n - toRead)
             (outR + toRead).update(repeating: 0, count: n - toRead)
             primed = false
+            underrunCount.add(1, ordering: .relaxed)
         }
         readIndex.store(r + toRead, ordering: .releasing)
         return toRead > 0

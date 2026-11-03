@@ -121,6 +121,56 @@ struct AudioDevice: Identifiable, Hashable {
         (try? caGet(id, kAudioDevicePropertyNominalSampleRate, initial: Float64(0))) ?? 0
     }
 
+    static let commonSampleRates: [Double] = [44_100, 48_000, 88_200, 96_000, 176_400, 192_000]
+
+    /// Common rates the device supports (its ranges can be discrete values or continuous spans).
+    static func availableSampleRates(_ id: AudioDeviceID) -> [Double] {
+        var address = caAddress(kAudioDevicePropertyAvailableNominalSampleRates)
+        var size: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(id, &address, 0, nil, &size) == noErr, size > 0 else { return [] }
+        var ranges = [AudioValueRange](repeating: AudioValueRange(), count: Int(size) / MemoryLayout<AudioValueRange>.size)
+        guard AudioObjectGetPropertyData(id, &address, 0, nil, &size, &ranges) == noErr else { return [] }
+        return commonSampleRates.filter { rate in ranges.contains { $0.mMinimum <= rate && rate <= $0.mMaximum } }
+    }
+
+    static func bufferFrameSizeRange(_ id: AudioDeviceID) -> ClosedRange<Int> {
+        guard let r = try? caGet(id, kAudioDevicePropertyBufferFrameSizeRange, initial: AudioValueRange()),
+              r.mMaximum >= r.mMinimum, r.mMaximum > 0 else { return 15...4096 }
+        return Int(r.mMinimum)...Int(r.mMaximum)
+    }
+
+    static func bufferFrameSize(_ id: AudioDeviceID) -> Int {
+        Int((try? caGet(id, kAudioDevicePropertyBufferFrameSize, initial: UInt32(0))) ?? 0)
+    }
+
+    /// Per-process I/O buffer size of a device (affects only this app's I/O on it).
+    @discardableResult
+    static func setBufferFrameSize(_ id: AudioDeviceID, _ frames: Int) -> Bool {
+        var address = caAddress(kAudioDevicePropertyBufferFrameSize)
+        var value = UInt32(frames)
+        return AudioObjectSetPropertyData(id, &address, 0, nil, UInt32(MemoryLayout<UInt32>.size), &value) == noErr
+    }
+
+    /// Device + safety offset + first-stream latency in one direction, in frames (excludes the I/O buffer).
+    static func fixedLatency(_ id: AudioDeviceID, scope: AudioObjectPropertyScope) -> Int {
+        func get(_ object: AudioObjectID, _ selector: AudioObjectPropertySelector, _ scope: AudioObjectPropertyScope) -> Int {
+            var address = caAddress(selector, scope: scope)
+            var value: UInt32 = 0
+            var size = UInt32(MemoryLayout<UInt32>.size)
+            return AudioObjectGetPropertyData(object, &address, 0, nil, &size, &value) == noErr ? Int(value) : 0
+        }
+        var total = get(id, kAudioDevicePropertyLatency, scope) + get(id, kAudioDevicePropertySafetyOffset, scope)
+        var address = caAddress(kAudioDevicePropertyStreams, scope: scope)
+        var size: UInt32 = 0
+        if AudioObjectGetPropertyDataSize(id, &address, 0, nil, &size) == noErr, size >= UInt32(MemoryLayout<AudioStreamID>.size) {
+            var streams = [AudioStreamID](repeating: 0, count: Int(size) / MemoryLayout<AudioStreamID>.size)
+            if AudioObjectGetPropertyData(id, &address, 0, nil, &size, &streams) == noErr, let first = streams.first {
+                total += get(first, kAudioStreamPropertyLatency, kAudioObjectPropertyScopeGlobal)
+            }
+        }
+        return total
+    }
+
     static func setNominalSampleRate(_ id: AudioDeviceID, _ rate: Double) {
         var address = caAddress(kAudioDevicePropertyNominalSampleRate)
         var value = Float64(rate)

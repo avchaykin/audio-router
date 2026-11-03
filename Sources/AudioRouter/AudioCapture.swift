@@ -29,21 +29,23 @@ final class AudioCapture {
     private var aggregateID = AudioObjectID(kAudioObjectUnknown)
     private var ioProcID: AudioDeviceIOProcID?
     private(set) var sampleRate: Double = 0
+    /// Capture-side latency in frames (aggregate input latency + I/O buffer), valid after start.
+    private(set) var inputLatencyFrames = 0
 
     init(ring: StereoRingBuffer) { self.ring = ring }
 
     deinit { stop() }
 
-    func start(source: CaptureSource, outputDevice: AudioDeviceID) throws {
+    func start(source: CaptureSource, outputDevice: AudioDeviceID, bufferFrames: Int?) throws {
         do {
-            try startThrowing(source: source, outputDevice: outputDevice)
+            try startThrowing(source: source, outputDevice: outputDevice, bufferFrames: bufferFrames)
         } catch {
             stop()
             throw error
         }
     }
 
-    private func startThrowing(source: CaptureSource, outputDevice: AudioDeviceID) throws {
+    private func startThrowing(source: CaptureSource, outputDevice: AudioDeviceID, bufferFrames: Int?) throws {
         let outputUID = try deviceUID(outputDevice)
         var subDevices: [[String: Any]] = [[kAudioSubDeviceUIDKey: outputUID]]
         var taps: [[String: Any]] = []
@@ -95,6 +97,12 @@ final class AudioCapture {
         try caCheck(AudioHardwareCreateAggregateDevice(aggregate as CFDictionary, &aggregateID),
                     "Create aggregate device")
         sampleRate = AudioDevice.nominalSampleRate(aggregateID)
+        if let bufferFrames {
+            let range = AudioDevice.bufferFrameSizeRange(aggregateID)
+            AudioDevice.setBufferFrameSize(aggregateID, min(max(bufferFrames, range.lowerBound), range.upperBound))
+        }
+        inputLatencyFrames = AudioDevice.fixedLatency(aggregateID, scope: kAudioObjectPropertyScopeInput)
+            + AudioDevice.bufferFrameSize(aggregateID)
 
         let ring = self.ring
         let skip = skipBuffers

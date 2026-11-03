@@ -61,8 +61,41 @@ final class AudioRouter: ObservableObject {
     }
     /// nil = follow the system default output.
     @Published var outputUID: String? = nil {
-        didSet { guard outputUID != oldValue else { return }; savePrefs(); restart() }
+        didSet { guard outputUID != oldValue else { return }; savePrefs(); refreshDeviceInfo(); restart() }
     }
+
+    // Latency-related settings (nil = automatic / device default). Changes restart processing.
+    @Published var sampleRateSetting: Double? = nil {
+        didSet { guard sampleRateSetting != oldValue else { return }; savePrefs(); restart() }
+    }
+    @Published var bufferSetting: Int? = nil {
+        didSet { guard bufferSetting != oldValue else { return }; savePrefs(); restart() }
+    }
+    @Published var safetySetting: Int? = nil {
+        didSet { guard safetySetting != oldValue else { return }; savePrefs(); restart() }
+    }
+    /// What the current output device offers.
+    @Published private(set) var availableSampleRates: [Double] = []
+    @Published private(set) var bufferRange: ClosedRange<Int> = 15...4096
+    @Published private(set) var deviceSampleRate: Double = 0
+    @Published private(set) var deviceBufferFrames = 0
+    /// Values in effect while running.
+    @Published private(set) var activeBufferFrames = 0
+    @Published private(set) var activeSafetyFrames = 0
+    @Published private(set) var latencyBreakdown: (input: Double, safety: Double, output: Double) = (0, 0, 0)
+    @Published private(set) var dropouts = 0
+
+    /// Input + safety buffer + output + plug-ins, in ms (0 when stopped).
+    var estimatedLatencyMs: Double {
+        guard isRunning else { return 0 }
+        return latencyBreakdown.input + latencyBreakdown.safety + latencyBreakdown.output + latencyMs
+    }
+
+    static let bufferChoices = [32, 64, 128, 256, 512, 1024, 2048]
+    static let safetyChoices = [64, 128, 256, 512, 1024, 2048, 4096]
+
+    /// Automatic safety buffer: enough to absorb the scheduling jitter between capture and playback.
+    static func autoSafety(buffer: Int) -> Int { max(256, buffer * 2) }
 
     var inputDevices: [AudioDevice] { devices.filter { $0.inputChannels > 0 } }
     /// The virtual device is never offered as an output: it would feed straight back into itself.
@@ -93,6 +126,9 @@ final class AudioRouter: ObservableObject {
         if defaults.object(forKey: "outputVolume") != nil { outputVolume = defaults.float(forKey: "outputVolume") }
         if let key = defaults.string(forKey: "inputSource") { inputSource = CaptureSource(storageKey: key) }
         outputUID = defaults.string(forKey: "outputUID")
+        if defaults.object(forKey: "sampleRate") != nil { sampleRateSetting = defaults.double(forKey: "sampleRate") }
+        if defaults.object(forKey: "bufferFrames") != nil { bufferSetting = defaults.integer(forKey: "bufferFrames") }
+        if defaults.object(forKey: "safetyFrames") != nil { safetySetting = defaults.integer(forKey: "safetyFrames") }
         loadingPrefs = false
         refreshDevices()
 
@@ -145,7 +181,26 @@ final class AudioRouter: ObservableObject {
         lastStart = Date()
         do {
             let device = try resolveOutputDevice()
+
+            // Sample rate: set on the output device (it clocks everything); wait for it to settle.
+            if let rate = sampleRateSetting, AudioDevice.availableSampleRates(device).contains(rate),
+               AudioDevice.nominalSampleRate(device) != rate {
+                AudioDevice.setNominalSampleRate(device, rate)
+                let deadline = Date().addingTimeInterval(1)
+                while AudioDevice.nominalSampleRate(device) != rate && Date() < deadline { usleep(20_000) }
+            }
+
             try setEngineOutput(device)
+            let range = AudioDevice.bufferFrameSizeRange(device)
+            if let frames = bufferSetting, let unit = engine.outputNode.audioUnit {
+                var size = UInt32(min(max(frames, range.lowerBound), range.upperBound))
+                AudioUnitSetProperty(unit, kAudioDevicePropertyBufferFrameSize, kAudioUnitScope_Global, 0,
+                                     &size, UInt32(MemoryLayout<UInt32>.size))
+            }
+            let buffer = bufferSetting.map { min(max($0, range.lowerBound), range.upperBound) }
+                ?? AudioDevice.bufferFrameSize(device)
+            let safety = safetySetting ?? Self.autoSafety(buffer: buffer)
+            ring.configure(targetFill: safety, maxFill: safety + 2 * buffer + 512)
 
             let deviceRate = engine.outputNode.outputFormat(forBus: 0).sampleRate
             if deviceRate > 0, deviceRate != format.sampleRate { makeSource(sampleRate: deviceRate); rewire() }
@@ -155,7 +210,7 @@ final class AudioRouter: ObservableObject {
             try engine.start()   // must run first so our process has an audio object to exclude from the tap
 
             var capture = AudioCapture(ring: ring)
-            try capture.start(source: inputSource, outputDevice: device)
+            try capture.start(source: inputSource, outputDevice: device, bufferFrames: bufferSetting)
             if capture.sampleRate > 0, capture.sampleRate != format.sampleRate {
                 // Capture rate disagrees with what we assumed: rebuild the source nodes at its rate.
                 capture.stop(); engine.stop()
@@ -163,10 +218,21 @@ final class AudioRouter: ObservableObject {
                 ring.reset()
                 try engine.start()
                 capture = AudioCapture(ring: ring)
-                try capture.start(source: inputSource, outputDevice: device)
+                try capture.start(source: inputSource, outputDevice: device, bufferFrames: bufferSetting)
             }
             self.capture = capture
             isRunning = true
+            let msPerFrame = 1000 / format.sampleRate
+            activeBufferFrames = AudioDevice.bufferFrameSize(device)
+            activeSafetyFrames = ring.targetFill
+            latencyBreakdown = (
+                input: Double(capture.inputLatencyFrames) * msPerFrame,
+                safety: Double(ring.targetFill) * msPerFrame,
+                output: Double(AudioDevice.fixedLatency(device, scope: kAudioObjectPropertyScopeOutput) + activeBufferFrames) * msPerFrame
+            )
+            dropouts = 0
+            dropoutBase = 0
+            refreshDeviceInfo()
             status = "\(inputName) → \(deviceName(device)) @ \(Int(format.sampleRate)) Hz"
         } catch {
             capture?.stop(); capture = nil
@@ -222,8 +288,27 @@ final class AudioRouter: ObservableObject {
 
     func refreshDevices() {
         devices = AudioDevice.all()
+        refreshDeviceInfo()
         driverInstalled = FileManager.default.fileExists(atPath: Self.installedDriverPath)
     }
+
+    /// Rates / buffer range / current values of the output device (for the settings window).
+    func refreshDeviceInfo() {
+        guard let device = try? resolveOutputDevice() else {
+            availableSampleRates = []; deviceSampleRate = 0; deviceBufferFrames = 0
+            return
+        }
+        availableSampleRates = AudioDevice.availableSampleRates(device)
+        bufferRange = AudioDevice.bufferFrameSizeRange(device)
+        deviceSampleRate = AudioDevice.nominalSampleRate(device)
+        deviceBufferFrames = AudioDevice.bufferFrameSize(device)
+    }
+
+    func resetDropouts() {
+        dropoutBase = ring.underruns + ring.skips
+        dropouts = 0
+    }
+    private var dropoutBase = 0
 
     private static let installedDriverPath = "/Library/Audio/Plug-Ins/HAL/AudioRouterDriver.driver"
 
@@ -426,12 +511,18 @@ final class AudioRouter: ObservableObject {
                 // Peak hold, then ~20 dB/s fall-off.
                 self.inputLevel = max(inHistory.max()!, self.inputLevel * 0.89)
                 self.outputLevel = max(outHistory.max()!, self.outputLevel * 0.89)
+                if self.isRunning {
+                    let total = self.ring.underruns + self.ring.skips - self.dropoutBase
+                    if total != self.dropouts { self.dropouts = total }
+                }
                 tick += 1
                 if tick % 10 == 0 {
                     self.updateLatency()   // plug-ins may change latency with their settings
                     if let log = self.debugLog {
-                        let line = String(format: "in=%.4f out=%.4f mix=%.2f vol=%.2f lat=%.2fms  %@\n",
-                                          inWindow, outWindow, self.mix, self.outputVolume, self.latencyMs, self.status)
+                        let line = String(format: "in=%.4f out=%.4f mix=%.2f vol=%.2f lat=%.2fms est=%.1fms buf=%d safety=%d drop=%d  %@\n",
+                                          inWindow, outWindow, self.mix, self.outputVolume, self.latencyMs,
+                                          self.estimatedLatencyMs, self.activeBufferFrames, self.activeSafetyFrames,
+                                          self.dropouts, self.status)
                         log.write(line.data(using: .utf8)!)
                     }
                     inWindow = 0; outWindow = 0
@@ -446,6 +537,9 @@ final class AudioRouter: ObservableObject {
         UserDefaults.standard.set(outputVolume, forKey: "outputVolume")
         UserDefaults.standard.set(inputSource.storageKey, forKey: "inputSource")
         UserDefaults.standard.set(outputUID, forKey: "outputUID")
+        UserDefaults.standard.set(sampleRateSetting, forKey: "sampleRate")
+        UserDefaults.standard.set(bufferSetting, forKey: "bufferFrames")
+        UserDefaults.standard.set(safetySetting, forKey: "safetyFrames")
     }
 
     private func setEngineOutput(_ device: AudioDeviceID) throws {

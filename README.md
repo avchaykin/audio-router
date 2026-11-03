@@ -18,6 +18,16 @@ A small macOS app that processes live system audio with a chain of Audio Unit ef
 - The chain and each plug-in's state are saved when you quit and restored on the next launch.
 - Follows changes to the default output device and devices being plugged/unplugged.
 
+## Settings (⌘,)
+
+- **Audio** — sample rate (set on the output device; affects all apps using it), I/O buffer size
+  (per-app), and the safety buffer between capture and playback (Auto = 2 × I/O buffer, ≥ 256 frames).
+- **Latency** — estimated latency (input + safety + output + plug-ins) and a dropout counter while
+  processing; the status bar shows both too. Example on a MiniFuse 4 @ 44.1 kHz: device default
+  (512 / 1024) ≈ 48 ms, buffer 64 ≈ 10 ms, buffer 32 + safety 64 ≈ 4 ms.
+- **Appearance** — same options as MIDI Filter: glass opacity, glow colour and intensity,
+  backlight bulb colour / shape / blur / intensity.
+
 ## Virtual device
 
 `Driver/AudioRouterDriver.c` is a small Core Audio HAL plug-in (AudioServerPlugIn) that adds an
@@ -48,7 +58,7 @@ The app is ad-hoc signed, so after a rebuild macOS may ask again.
         ├► wet source node ─► AU 1 ─► AU 2 ─► … ─► wet mixer ─┐
         └► dry source node (delayed by plug-in latency) ─► dry mixer ─┴► main mixer (gain) ─► output
 
-Debug: `open "build.nosync/Audio Router.app" --args --autostart --log /path/levels.log` logs peak levels every 0.5 s.
+Debug: `open "build.nosync/Audio Router.app" --args --autostart --log /path/levels.log` logs levels, latency and dropouts every 0.5 s; `--settings` opens Settings at launch.
 
 ## Design
 

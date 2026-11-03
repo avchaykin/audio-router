@@ -4,6 +4,7 @@ import SwiftUI
 @main
 struct AudioRouterApp: App {
     @StateObject private var router = AudioRouter()
+    @StateObject private var look = Appearance.shared
 
     init() {
         Theme.registerFonts()
@@ -13,14 +14,23 @@ struct AudioRouterApp: App {
         Window("Audio Router", id: "main") {
             ContentView()
                 .environmentObject(router)
+                .environmentObject(look)
         }
         .windowStyle(.hiddenTitleBar)
         .defaultSize(width: 980, height: 640)
+
+        Settings {
+            SettingsView()
+                .environmentObject(router)
+                .environmentObject(look)
+        }
     }
 }
 
 struct ContentView: View {
     @EnvironmentObject private var router: AudioRouter
+    @EnvironmentObject private var look: Appearance
+    @Environment(\.openSettings) private var openSettings
 
     var body: some View {
         VStack(spacing: 12) {
@@ -50,7 +60,12 @@ struct ContentView: View {
         .frame(minWidth: 880, minHeight: 560)
         .font(Theme.mono(11.5))
         .foregroundStyle(Theme.text)
+        .id(look.themeVersion)   // redraw everything when the appearance changes
         .frostedWindow()
+        .onAppear {
+            // debug / automation: open Settings at launch
+            if ProcessInfo.processInfo.arguments.contains("--settings") { openSettings() }
+        }
     }
 }
 
@@ -93,6 +108,12 @@ struct HeaderBar: View {
                 meterRow("IN", router.inputLevel)
                 meterRow("OUT", router.outputLevel)
             }
+
+            SettingsLink {
+                Image(systemName: "gearshape").font(.system(size: 12, weight: .semibold))
+            }
+            .buttonStyle(RubberButtonStyle(padding: EdgeInsets(top: 6, leading: 9, bottom: 6, trailing: 9)))
+            .help("Settings (⌘,) — sample rate, buffers, appearance")
         }
         .frame(height: 34)
     }
@@ -455,6 +476,16 @@ struct StatusBar: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
             Spacer()
+            if router.isRunning {
+                Text(String(format: "≈ %.1f ms", router.estimatedLatencyMs))
+                    .font(Theme.mono(10.5, .medium))
+                    .foregroundStyle(Theme.textDim)
+                    .help("Estimated latency through Audio Router (details in Settings)")
+                Text("\(router.dropouts) dropouts")
+                    .font(Theme.mono(10.5))
+                    .foregroundStyle(router.dropouts > 0 ? Theme.block : Theme.textFaint)
+                    .help("Buffer underruns / catch-up skips since start — raise the safety buffer in Settings if this keeps growing")
+            }
         }
         .padding(.horizontal, 4)
     }
