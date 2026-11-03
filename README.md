@@ -17,7 +17,8 @@ Typical uses:
 - Try out AU plug-ins on any material without opening a DAW.
 
 <p align="center">
-  <img src="docs/main.png" alt="Main window: input and output selection, virtual device, effect chain, dry/wet mix and output gain" width="900">
+  <img src="docs/main.png" alt="Main window, Dark Glass skin: input and output selection, virtual device, effect chain, dry/wet mix and output gain" width="900"><br>
+  <img src="docs/aluminium.png" alt="The same window with the Aluminium skin: scratched, brushed anodized aluminium" width="900">
 </p>
 
 ## Features
@@ -42,7 +43,11 @@ Typical uses:
   - I/O buffer size, for Audio Router only.
   - Safety buffer between capture and playback.
   - Live estimate of the total latency, with its breakdown, and a dropout counter.
-- **Looks:** a frosted-glass dark UI with "rubber" keys, shared with [MIDI Filter](https://github.com/avchaykin/midi-filter). You can set the glass opacity, glow colour and intensity, and a backlight "bulb" (colour, shape, blur and intensity).
+- **Looks:** two skins, switched in Settings → Appearance:
+  - **Dark Glass:** a frosted-glass dark UI with "rubber" keys, shared with [MIDI Filter](https://github.com/avchaykin/midi-filter).
+  - **Aluminium:** a light skin on scratched, brushed anodized aluminium, with machined recessed panels.
+
+  In both you can set the glow colour and intensity, and a backlight "bulb" (colour, shape, blur and intensity). Dark Glass also has a glass opacity setting.
 
 ## Install
 
@@ -121,7 +126,7 @@ Sources/AudioRouter/
   CoreAudioUtils.swift       Core Audio device helpers
   PluginWindowManager.swift  plug-in UI windows
   SettingsView.swift         Settings: audio, latency, appearance
-  Theme/                     shared MIDI Filter look: theme, controls, appearance
+  Theme/                     shared MIDI Filter look: theme, controls, appearance, aluminium texture
 Driver/                      virtual device HAL plug-in (C) and its Info.plist
 Resources/                   Info.plist, app icon, JetBrains Mono fonts
 scripts/make-icon.swift      generates Resources/AppIcon.icns
@@ -136,6 +141,7 @@ Debug launch arguments:
 ```sh
 open "build.nosync/Audio Router.app" --args --autostart --log /tmp/levels.log   # log levels, latency and dropouts every 0.5 s
 open "build.nosync/Audio Router.app" --args --settings                          # open Settings at launch
+open "build.nosync/Audio Router.app" --args --settings --snapshot /tmp/shots     # save a PNG of each window after 2 s
 ```
 
 ## Contributing

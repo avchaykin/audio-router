@@ -19,8 +19,8 @@ struct RubberSlider: View {
             let ox = CGFloat(fraction(origin ?? range.lowerBound)) * usable
             ZStack(alignment: .leading) {
                 Capsule()
-                    .fill(Color.black.opacity(0.40))
-                    .overlay(Capsule().strokeBorder(Color.white.opacity(0.07)))
+                    .fill(Theme.well(0.40))
+                    .overlay(Capsule().strokeBorder(Theme.line(0.07)))
                     .frame(height: 6)
                     .padding(.horizontal, knobWidth / 2)
                 Capsule()
@@ -64,7 +64,7 @@ struct LEDMeter: View {
                 let hot = i >= segments - 2
                 let color = hot ? Theme.block : Theme.glowSoft
                 RoundedRectangle(cornerRadius: 1.5, style: .continuous)
-                    .fill(on ? color : Color.white.opacity(0.06))
+                    .fill(on ? color : Theme.line(0.07))
                     .shadow(color: on ? color.opacity(Theme.glowOpacity(0.9)) : .clear, radius: Theme.glowRadius(3))
             }
         }

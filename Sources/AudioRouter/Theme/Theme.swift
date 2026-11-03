@@ -8,6 +8,8 @@ import SwiftUI
 /// via `.id(themeVersion)` whenever they change).
 enum ThemeStore {
     static let defaultGlow: [Double] = [0.64, 0.40, 1.0]   // violet
+    static let defaultSkin = Skin.glass
+    nonisolated(unsafe) static var skin: Skin = defaultSkin
     static let defaultOpacity: Double = 1.0
 
     static let defaultIntensity: Double = 0.59
@@ -51,30 +53,64 @@ enum ThemeStore {
     ]
 }
 
+/// Window skin: dark frosted glass, or light scratched anodized aluminium.
+enum Skin: Int, CaseIterable, Identifiable {
+    case glass, aluminum
+    var id: Int { rawValue }
+    var title: String {
+        switch self {
+        case .glass: "Dark Glass"
+        case .aluminum: "Aluminium"
+        }
+    }
+    var help: String {
+        switch self {
+        case .glass: "Dark frosted glass with glowing rubber keys"
+        case .aluminum: "Light, scratched anodized aluminium"
+        }
+    }
+}
+
 enum Theme {
+    static var isLight: Bool { ThemeStore.skin == .aluminum }
+    static var colorScheme: ColorScheme { isLight ? .light : .dark }
+    static var nsAppearance: NSAppearance? { NSAppearance(named: isLight ? .aqua : .darkAqua) }
+
     /// Selection glow colour (user-configurable, default orange-red).
     static var glow: Color { rgb(ThemeStore.glowRGB) }
-    /// Slightly lighter glow for text.
-    static var glowSoft: Color { rgb(ThemeStore.glowRGB.map { $0 + (1 - $0) * 0.28 }) }
+    /// Glow for text and icons: lighter on dark glass, a bit deeper on aluminium so it stays readable.
+    static var glowSoft: Color {
+        isLight ? rgb(ThemeStore.glowRGB.map { $0 * 0.80 })
+                : rgb(ThemeStore.glowRGB.map { $0 + (1 - $0) * 0.28 })
+    }
+
+    /// Contrast colour for hairlines and unlit LEDs: white on glass, black on aluminium.
+    static var ink: Color { isLight ? .black : .white }
+    /// Hairline / faint overlay of the given strength.
+    static func line(_ o: Double) -> Color { isLight ? Color.black.opacity(min(1, o * 1.6)) : Color.white.opacity(o) }
+    /// Recessed area (wells, grooves, list backgrounds).
+    static func well(_ o: Double) -> Color { isLight ? Color.black.opacity(o * 0.36) : Color.black.opacity(o) }
+    /// Raised plate (rows sitting on a well).
+    static func plate(_ o: Double) -> Color { isLight ? Color.white.opacity(min(0.85, o * 9)) : Color.white.opacity(o) }
 
     /// Backlight "bulb" colour beneath lit controls.
     static var backlight: Color { rgb(ThemeStore.backlightRGB) }
     static var hasBacklight: Bool { ThemeStore.backlightEnabled && ThemeStore.bulbIntensity > 0.01 }
     /// Glow intensity factor.
     static var k: Double { ThemeStore.glowIntensity }
-    /// Opacity scaled by intensity, clamped to 1.
-    static func glowOpacity(_ base: Double) -> Double { min(1, base * k) }
+    /// Opacity scaled by intensity, clamped to 1 (glows are toned down on the light skin).
+    static func glowOpacity(_ base: Double) -> Double { min(1, base * k * (isLight ? 0.6 : 1)) }
     /// Radius scaled by intensity (grows slower than opacity).
     static func glowRadius(_ base: CGFloat) -> CGFloat { base * CGFloat(0.4 + 0.6 * k) }
 
     static func rgb(_ c: [Double]) -> Color {
         Color(red: c.count > 0 ? c[0] : 1, green: c.count > 1 ? c[1] : 0.32, blue: c.count > 2 ? c[2] : 0.1)
     }
-    static let text = Color.white.opacity(0.88)
-    static let textDim = Color.white.opacity(0.50)
-    static let textFaint = Color.white.opacity(0.30)
-    static let pass = Color(red: 0.35, green: 0.90, blue: 0.55)
-    static let block = Color(red: 1.0, green: 0.30, blue: 0.30)
+    static var text: Color { isLight ? Color(white: 0.10).opacity(0.90) : Color.white.opacity(0.88) }
+    static var textDim: Color { isLight ? Color(white: 0.10).opacity(0.58) : Color.white.opacity(0.50) }
+    static var textFaint: Color { isLight ? Color(white: 0.10).opacity(0.40) : Color.white.opacity(0.30) }
+    static var pass: Color { isLight ? Color(red: 0.10, green: 0.55, blue: 0.28) : Color(red: 0.35, green: 0.90, blue: 0.55) }
+    static var block: Color { isLight ? Color(red: 0.85, green: 0.15, blue: 0.15) : Color(red: 1.0, green: 0.30, blue: 0.30) }
 
     static func mono(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
         let name: String
@@ -122,6 +158,8 @@ struct GlassBackground: NSViewRepresentable {
 
 /// Makes the hosting window transparent, dark and draggable by its background.
 struct WindowConfigurator: NSViewRepresentable {
+    var skin: Skin
+
     final class Probe: NSView {
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
@@ -132,33 +170,52 @@ struct WindowConfigurator: NSViewRepresentable {
             w.titleVisibility = .hidden
             w.styleMask.insert(.fullSizeContentView)
             w.isMovableByWindowBackground = true
-            w.appearance = NSAppearance(named: .darkAqua)
+            w.appearance = Theme.nsAppearance
+            WindowConfigurator.hideTitlebarBackground(w)
+            // AppKit may (re)install it while the window finishes setting up
+            DispatchQueue.main.async { WindowConfigurator.hideTitlebarBackground(w) }
         }
     }
 
+    /// Windows with a scroll view at the top (Settings) get an opaque title-bar material even when the
+    /// title bar is transparent; it shows as a band across the window, so hide it.
+    static func hideTitlebarBackground(_ window: NSWindow) {
+        func walk(_ v: NSView) {
+            if String(describing: type(of: v)) == "NSTitlebarBackgroundView" { v.isHidden = true; return }
+            v.subviews.forEach(walk)
+        }
+        if let frame = window.contentView?.superview { walk(frame) }
+    }
+
     func makeNSView(context: Context) -> NSView { Probe() }
-    func updateNSView(_ nsView: NSView, context: Context) {}
+    func updateNSView(_ nsView: NSView, context: Context) {
+        nsView.window?.appearance = Theme.nsAppearance
+    }
 }
 
 private let titleBarReach: CGFloat = 40
 
 extension View {
-    /// Dark grey frosted glass + window setup.
+    /// Window background for the current skin (dark frosted glass or aluminium) + window setup.
     func frostedWindow() -> some View {
         background {
             ZStack {
-                GlassBackground()
-                LinearGradient(colors: [Color(white: 0.15).opacity(ThemeStore.glassOpacity),
-                                        Color(white: 0.07).opacity(min(1, ThemeStore.glassOpacity + 0.06))],
-                               startPoint: .top, endPoint: .bottom)
-                WindowConfigurator().frame(width: 0, height: 0)
+                if Theme.isLight {
+                    AluminumBackground()
+                } else {
+                    GlassBackground()
+                    LinearGradient(colors: [Color(white: 0.15).opacity(ThemeStore.glassOpacity),
+                                            Color(white: 0.07).opacity(min(1, ThemeStore.glassOpacity + 0.06))],
+                                   startPoint: .top, endPoint: .bottom)
+                }
+                WindowConfigurator(skin: ThemeStore.skin).frame(width: 0, height: 0)
             }
             // Reach under the transparent title bar even when the root view is fixed-size
             // and laid out below it (simple mode), where ignoresSafeArea can't stretch it.
             .padding(.top, -titleBarReach)
             .ignoresSafeArea()
         }
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(Theme.colorScheme)
     }
 }
 
@@ -211,7 +268,8 @@ struct BulbLight: View {
 
     /// Peak opacity scaled by bulb intensity.
     private var peak: Double {
-        min(1, (halo ? 0.40 : 0.78) * strength * ThemeStore.bulbIntensity)
+        // dimmer on aluminium: a bright bulb under white legends would wash them out
+        min(1, (halo ? 0.40 : 0.78) * strength * ThemeStore.bulbIntensity * (Theme.isLight ? 0.5 : 1))
     }
 
     /// Hard core that widens into a soft falloff as blur increases.
@@ -293,33 +351,41 @@ struct RubberSurface: ViewModifier {
 
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
+        let light = Theme.isLight
         content
             .foregroundStyle(isOn ? Color.white : Theme.text.opacity(0.8))
+            .shadow(color: isOn && light ? .black.opacity(0.35) : .clear, radius: 0.6, y: 0.5)
             .background {
                 ZStack {
                     if isOn { BacklightHalo(strength: 0.8) }
-                    shape.fill(LinearGradient(
-                        colors: isOn
-                            ? [tint.opacity(0.42), tint.opacity(0.20)]
-                            : [Color.white.opacity(pressed ? 0.05 : 0.10), Color.white.opacity(pressed ? 0.07 : 0.035)],
-                        startPoint: .top, endPoint: .bottom))
+                    shape.fill(LinearGradient(colors: fillColors(light), startPoint: .top, endPoint: .bottom))
                     if isOn { BacklightInside().clipShape(shape) }
                     // soft top sheen = rubbery convex look
-                    shape.fill(LinearGradient(colors: [Color.white.opacity(isOn ? 0.18 : 0.08), .clear],
+                    shape.fill(LinearGradient(colors: [Color.white.opacity(light ? (isOn ? 0.30 : 0.55) : (isOn ? 0.18 : 0.08)), .clear],
                                               startPoint: .top, endPoint: .center))
                         .padding(1)
                     shape.strokeBorder(LinearGradient(
                         colors: isOn
                             ? [tint.opacity(1.0), tint.opacity(0.6)]
-                            : [Color.white.opacity(0.20), Color.white.opacity(0.05)],
+                            : light ? [Color.white.opacity(0.9), Color.black.opacity(0.28)]
+                                    : [Color.white.opacity(0.20), Color.white.opacity(0.05)],
                         startPoint: .top, endPoint: .bottom), lineWidth: 1)
                 }
-                .shadow(color: isOn ? tint.opacity(Theme.glowOpacity(0.85)) : .black.opacity(0.35),
+                .shadow(color: isOn ? tint.opacity(Theme.glowOpacity(0.85)) : .black.opacity(light ? 0.22 : 0.35),
                         radius: isOn ? Theme.glowRadius(5) : 1.5, y: isOn ? 0 : 1)
                 .shadow(color: isOn ? tint.opacity(Theme.glowOpacity(0.40)) : .clear, radius: Theme.glowRadius(11))
             }
             .scaleEffect(pressed ? 0.97 : 1)
             .animation(.easeOut(duration: 0.12), value: isOn)
+    }
+
+    private func fillColors(_ light: Bool) -> [Color] {
+        switch (isOn, light) {
+        case (true, false): [tint.opacity(0.42), tint.opacity(0.20)]
+        case (true, true): [tint.opacity(0.95), tint.opacity(0.78)]
+        case (false, false): [Color.white.opacity(pressed ? 0.05 : 0.10), Color.white.opacity(pressed ? 0.07 : 0.035)]
+        case (false, true): [Color.white.opacity(pressed ? 0.40 : 0.78), Color(white: 0.86).opacity(pressed ? 0.6 : 0.45)]
+        }
     }
 }
 
@@ -365,16 +431,18 @@ struct GlowCheckbox: View {
         ZStack {
             if isOn { BacklightHalo(strength: 0.9, blur: 6) }
             shape.fill(LinearGradient(
-                colors: isOn ? [Theme.glowSoft, Theme.glow] : [Color.white.opacity(0.10), Color.white.opacity(0.03)],
+                colors: isOn ? [Theme.glowSoft, Theme.glow]
+                    : Theme.isLight ? [Color(white: 0.97), Color(white: 0.80)]
+                                    : [Color.white.opacity(0.10), Color.white.opacity(0.03)],
                 startPoint: .top, endPoint: .bottom))
             if isOn { BacklightInside(strength: 1.1).clipShape(shape) }
             shape.fill(LinearGradient(colors: [Color.white.opacity(isOn ? 0.35 : 0.10), .clear],
                                       startPoint: .top, endPoint: .center))
                 .padding(1)
-            shape.strokeBorder(isOn ? Theme.glowSoft : Color.white.opacity(0.18), lineWidth: 1)
+            shape.strokeBorder(isOn ? Theme.glowSoft : Theme.line(0.18), lineWidth: 1)
         }
         .frame(width: size, height: size)
-        .shadow(color: isOn ? Theme.glow.opacity(Theme.glowOpacity(0.9)) : .black.opacity(0.4),
+        .shadow(color: isOn ? Theme.glow.opacity(Theme.glowOpacity(0.9)) : .black.opacity(Theme.isLight ? 0.2 : 0.4),
                 radius: isOn ? Theme.glowRadius(4) : 1, y: isOn ? 0 : 1)
         .shadow(color: isOn ? Theme.glow.opacity(Theme.glowOpacity(0.45)) : .clear, radius: Theme.glowRadius(9))
         .animation(.easeOut(duration: 0.12), value: isOn)
@@ -426,7 +494,7 @@ struct GlowNumberStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(Theme.mono(size, isOn ? .bold : .regular))
-            .foregroundStyle(isOn ? Theme.glowSoft : Color.white.opacity(configuration.isPressed ? 0.6 : 0.30))
+            .foregroundStyle(isOn ? Theme.glowSoft : Theme.ink.opacity(configuration.isPressed ? 0.6 : 0.30))
             .shadow(color: isOn ? Theme.glow.opacity(Theme.glowOpacity(1)) : .clear, radius: Theme.glowRadius(3))
             .shadow(color: isOn ? Theme.glow.opacity(Theme.glowOpacity(0.6)) : .clear, radius: Theme.glowRadius(8))
             .background {
@@ -476,10 +544,16 @@ struct Panel<Content: View, Accessory: View>: View {
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .topLeading)
         .background {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color.black.opacity(0.22))
-                .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.07), lineWidth: 1))
+            let shape = RoundedRectangle(cornerRadius: 14, style: .continuous)
+            if Theme.isLight {
+                // machined recess: darker top edge, bright bottom lip
+                shape.fill(Color.black.opacity(0.045))
+                    .overlay(shape.strokeBorder(LinearGradient(colors: [Color.black.opacity(0.22), Color.white.opacity(0.75)],
+                                                               startPoint: .top, endPoint: .bottom), lineWidth: 1))
+            } else {
+                shape.fill(Color.black.opacity(0.22))
+                    .overlay(shape.strokeBorder(Color.white.opacity(0.07), lineWidth: 1))
+            }
         }
     }
 }
@@ -531,7 +605,7 @@ struct RubberStepper: View {
                 .foregroundStyle(Theme.text)
                 .frame(width: width)
                 .padding(.vertical, 4)
-                .background(RoundedRectangle(cornerRadius: 5).fill(Color.black.opacity(0.28)))
+                .background(RoundedRectangle(cornerRadius: 5).fill(Theme.well(0.28)))
             key("plus") { value = min(range.upperBound, value + step) }
         }
     }

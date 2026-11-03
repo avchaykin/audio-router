@@ -8,6 +8,7 @@ final class Appearance: ObservableObject {
     static let shared = Appearance()
     private let defaults = UserDefaults.standard
 
+    @Published var skin: Skin { didSet { ThemeStore.skin = skin; save("skin", skin.rawValue) } }
     @Published var glassOpacity: Double { didSet { ThemeStore.glassOpacity = glassOpacity; save("glassOpacity", glassOpacity) } }
     @Published var glowRGB: [Double] { didSet { ThemeStore.glowRGB = glowRGB; save("glowRGB", glowRGB) } }
     @Published var glowIntensity: Double { didSet { ThemeStore.glowIntensity = glowIntensity; save("glowIntensity", glowIntensity) } }
@@ -28,6 +29,8 @@ final class Appearance: ObservableObject {
         func rgb(_ key: String, _ fallback: [Double]) -> [Double] {
             (defaults.array(forKey: key) as? [Double]).flatMap { $0.count == 3 ? $0 : nil } ?? fallback
         }
+        skin = defaults.object(forKey: "skin") != nil ? (Skin(rawValue: defaults.integer(forKey: "skin")) ?? ThemeStore.defaultSkin)
+                                                      : ThemeStore.defaultSkin
         glassOpacity = double("glassOpacity", ThemeStore.defaultOpacity)
         glowRGB = rgb("glowRGB", ThemeStore.defaultGlow)
         glowIntensity = double("glowIntensity", ThemeStore.defaultIntensity)
@@ -41,6 +44,7 @@ final class Appearance: ObservableObject {
     }
 
     private func apply() {
+        ThemeStore.skin = skin
         ThemeStore.glassOpacity = glassOpacity
         ThemeStore.glowRGB = glowRGB
         ThemeStore.glowIntensity = glowIntensity
@@ -56,6 +60,7 @@ final class Appearance: ObservableObject {
         themeVersion &+= 1
     }
 
+    /// Resets colours and lighting; the skin choice is kept.
     func reset() {
         glassOpacity = ThemeStore.defaultOpacity
         glowRGB = ThemeStore.defaultGlow

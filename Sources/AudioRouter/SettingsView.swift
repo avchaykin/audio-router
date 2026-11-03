@@ -13,6 +13,7 @@ struct SettingsView: View {
         }
         .formStyle(.grouped)
         .scrollContentBackground(.hidden)
+        .hideTopScrollEdge()
         .toggleStyle(.rubber)
         .font(Theme.mono(11.5))
         .foregroundStyle(Theme.text)
@@ -101,7 +102,18 @@ struct SettingsView: View {
 
     private var appearanceSection: some View {
         Section {
+            LabeledContent("Skin") {
+                choiceRow {
+                    ForEach(Skin.allCases) { skin in
+                        choice(skin.title, look.skin == skin) { look.skin = skin }
+                            .help(skin.help)
+                    }
+                }
+            }
             LabeledContent("Background opacity") { percentSlider($look.glassOpacity, 0.3...1) }
+                .disabled(look.skin != .glass)
+                .opacity(look.skin == .glass ? 1 : 0.4)
+                .help(look.skin == .glass ? "" : "Only for the Dark Glass skin")
             LabeledContent("Glow colour") { swatchRow(ThemeStore.swatches, $look.glowRGB) }
             LabeledContent("Glow intensity") { percentSlider($look.glowIntensity, 0...2) }
             Toggle("Backlight bulb under lit controls", isOn: $look.backlightEnabled)
@@ -185,7 +197,7 @@ struct SettingsView: View {
                     Circle()
                         .fill(Theme.rgb(rgb))
                         .frame(width: 16, height: 16)
-                        .overlay(Circle().strokeBorder(Color.white.opacity(selected ? 0.95 : 0.15),
+                        .overlay(Circle().strokeBorder(selected ? Theme.ink.opacity(0.85) : Theme.line(0.15),
                                                        lineWidth: selected ? 2 : 1))
                         .shadow(color: selected ? Theme.rgb(rgb) : .clear, radius: 5)
                 }
@@ -200,6 +212,17 @@ struct SettingsView: View {
                 }), supportsOpacity: false)
                 .labelsHidden()
                 .help("Custom colour")
+        }
+    }
+}
+
+private extension View {
+    /// The system's soft scroll-edge effect paints a pale band under the title bar on the light skin.
+    @ViewBuilder func hideTopScrollEdge() -> some View {
+        if #available(macOS 26, *) {
+            scrollEdgeEffectHidden(true, for: .top)
+        } else {
+            self
         }
     }
 }

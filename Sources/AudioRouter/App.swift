@@ -66,7 +66,24 @@ struct ContentView: View {
         .onAppear {
             // debug / automation: open Settings at launch
             if ProcessInfo.processInfo.arguments.contains("--settings") { openSettings() }
+            // debug / automation: write PNGs of all windows (works with the screen locked)
+            let args = ProcessInfo.processInfo.arguments
+            if let i = args.firstIndex(of: "--snapshot"), i + 1 < args.count {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2) { snapshotWindows(to: args[i + 1]) }
+            }
         }
+    }
+}
+
+/// Renders each visible window's content view into `<dir>/<title>.png`.
+@MainActor private func snapshotWindows(to dir: String) {
+    for window in NSApp.windows where window.isVisible {
+        guard let view = window.contentView?.superview ?? window.contentView,
+              let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { continue }
+        view.cacheDisplay(in: view.bounds, to: rep)
+        let name = window.title.isEmpty ? "window-\(window.windowNumber)" : window.title
+        try? rep.representation(using: .png, properties: [:])?
+            .write(to: URL(fileURLWithPath: dir).appendingPathComponent(name + ".png"))
     }
 }
 
@@ -126,7 +143,7 @@ struct HeaderBar: View {
             .lineLimit(1)
             .truncationMode(.middle)
             .padding(.horizontal, 7).padding(.vertical, 3)
-            .background(RoundedRectangle(cornerRadius: 5).strokeBorder(Color.white.opacity(0.15)))
+            .background(RoundedRectangle(cornerRadius: 5).strokeBorder(Theme.line(0.15)))
     }
 
     private func meterRow(_ label: String, _ level: Float) -> some View {
@@ -259,7 +276,7 @@ struct ChainSection: View {
                     .font(Theme.mono(11))
                     .foregroundStyle(Theme.textFaint)
                     .frame(maxWidth: .infinity, minHeight: 64, idealHeight: 64, maxHeight: .infinity)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.black.opacity(0.28)))
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Theme.well(0.28)))
             } else {
                 ScrollView {
                     VStack(spacing: 6) {
@@ -281,7 +298,7 @@ struct ChainSection: View {
                 .onPreferenceChange(ListHeightKey.self) { listHeight.value = $0 }
                 .scrollIndicators(.automatic)
                 .frame(minHeight: 64, idealHeight: min(max(listHeight.value, 64), maxListHeight), maxHeight: .infinity)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color.black.opacity(0.28)))
+                .background(RoundedRectangle(cornerRadius: 8).fill(Theme.well(0.28)))
             }
         }
         .frame(maxHeight: .infinity)
@@ -358,9 +375,9 @@ struct SlotRow: View {
         .padding(.vertical, 7)
         .background {
             RoundedRectangle(cornerRadius: 9, style: .continuous)
-                .fill(Color.white.opacity(slot.isEnabled ? 0.06 : 0.025))
+                .fill(Theme.plate(slot.isEnabled ? 0.06 : 0.025))
                 .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous)
-                    .strokeBorder(slot.isEnabled ? Theme.glow.opacity(0.35) : Color.white.opacity(0.06), lineWidth: 1))
+                    .strokeBorder(slot.isEnabled ? Theme.glow.opacity(0.35) : Theme.line(0.06), lineWidth: 1))
         }
         .contentShape(Rectangle())
         .onTapGesture(count: 2) { router.openEditor(slot) }
@@ -396,7 +413,7 @@ struct AddEffectPopover: View {
                 IconKey(symbol: "arrow.clockwise", help: "Rescan Audio Units") { router.refreshAvailableEffects() }
             }
             .padding(7)
-            .background(RoundedRectangle(cornerRadius: 6).fill(Color.black.opacity(0.3)))
+            .background(RoundedRectangle(cornerRadius: 6).fill(Theme.well(0.3)))
             .overlay(RoundedRectangle(cornerRadius: 6).strokeBorder(Theme.glow.opacity(0.6)))
 
             ScrollView {
@@ -427,7 +444,7 @@ struct AddEffectPopover: View {
         .padding(12)
         .frame(width: 340, height: 460)
         .font(Theme.mono(11.5))
-        .preferredColorScheme(.dark)
+        .preferredColorScheme(Theme.colorScheme)
     }
 }
 
