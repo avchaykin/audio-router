@@ -1,7 +1,7 @@
 import AppKit
 import SwiftUI
 
-/// Window background for the light skin: scratched, brushed anodized aluminium.
+/// Window background for the light skin: scratched, bead-blasted anodized aluminium.
 /// The texture is rendered once with Core Graphics (deterministic seed) and drawn unscaled
 /// from the top-left corner, so it looks identical on every redraw and in every window.
 struct AluminumBackground: View {
@@ -61,28 +61,38 @@ enum AluminumTexture {
         linear([(color(0.86, 1, tint: 0.008), 0), (color(0.78, 1, tint: 0.010), 0.55), (color(0.72, 1, tint: 0.012), 1)],
                from: .zero, to: CGPoint(x: 0, y: size.height))
 
-        // 2. Brushed grain: many hairlines running left–right, each a slightly different shade.
-        ctx.setLineCap(.butt)
-        var y: CGFloat = 0
-        while y < size.height {
-            var x: CGFloat = -20
-            while x < size.width {
-                let len = rng.range(40...600)
-                let bright = rng.unit() < 0.5
-                ctx.setStrokeColor(bright ? color(1, rng.range(0.03...0.11)) : color(0, rng.range(0.02...0.07)))
-                ctx.setLineWidth(rng.range(0.25...0.7))
-                let dy = rng.range(-0.25...0.25)
-                ctx.move(to: CGPoint(x: x, y: y))
-                ctx.addLine(to: CGPoint(x: x + len, y: y + dy))
-                ctx.strokePath()
-                x += len + rng.range(-10...30)
-            }
-            y += rng.range(0.35...0.9)
-        }
-
-        // 3. Broad satin sheen across the plate.
-        linear([(color(1, 0), 0), (color(1, 0.16), 0.38), (color(1, 0.04), 0.55), (color(1, 0.12), 0.72), (color(1, 0), 1)],
+        // 2. Soft satin sheen across the plate (bead-blasted metal scatters light, so keep it subtle).
+        linear([(color(1, 0), 0), (color(1, 0.10), 0.38), (color(1, 0.03), 0.55), (color(1, 0.07), 0.72), (color(1, 0), 1)],
                from: CGPoint(x: 0, y: 0), to: CGPoint(x: size.width, y: size.height * 0.6))
+
+        // 3. Bead-blasted grain, MacBook style: fine, uniform, non-directional noise on every pixel,
+        //    plus a faint coarser mottling so it doesn't look like digital static.
+        if let data = ctx.data {
+            let px = data.bindMemory(to: UInt8.self, capacity: ctx.bytesPerRow * h)
+            let row = ctx.bytesPerRow
+            // coarse mottling: a small random grid, bilinearly interpolated
+            let cell = 6, gw = w / cell + 2, gh = h / cell + 2
+            var grid = [Float](repeating: 0, count: gw * gh)
+            for i in grid.indices { grid[i] = Float(rng.unit() - 0.5) * 7 }
+            var seed = rng.next()
+            for y in 0..<h {
+                let gy = y / cell, fy = Float(y % cell) / Float(cell)
+                for x in 0..<w {
+                    let gx = x / cell, fx = Float(x % cell) / Float(cell)
+                    let a = grid[gy * gw + gx], b = grid[gy * gw + gx + 1]
+                    let c = grid[(gy + 1) * gw + gx], d = grid[(gy + 1) * gw + gx + 1]
+                    let mottle = (a + (b - a) * fx) * (1 - fy) + (c + (d - c) * fx) * fy
+                    // xorshift per pixel; sum of two uniforms = soft triangular grain
+                    seed ^= seed << 13; seed ^= seed >> 7; seed ^= seed << 17
+                    let n1 = Float(seed & 0xFFFF) / 65535, n2 = Float((seed >> 16) & 0xFFFF) / 65535
+                    let grain = (n1 + n2 - 1) * 15 + mottle
+                    let o = y * row + x * 4
+                    for ch in 0..<3 {
+                        px[o + ch] = UInt8(max(0, min(255, Float(px[o + ch]) + grain)))
+                    }
+                }
+            }
+        }
 
         // 4. Scratches: a thin dark groove with a bright lip next to it. Mostly short, a few long ones,
         //    some gently curved.
@@ -112,15 +122,7 @@ enum AluminumTexture {
             stroke(width * 0.9, color(1, 0.55 * depth), width * 0.8)     // catching the light
         }
 
-        // 5. Fine speckle (pitting in the anodized layer).
-        for _ in 0..<9000 {
-            let p = CGPoint(x: rng.range(0...size.width), y: rng.range(0...size.height))
-            let r = rng.range(0.2...0.6)
-            ctx.setFillColor(rng.unit() < 0.5 ? color(1, rng.range(0.1...0.35)) : color(0, rng.range(0.04...0.12)))
-            ctx.fillEllipse(in: CGRect(x: p.x - r, y: p.y - r, width: 2 * r, height: 2 * r))
-        }
-
-        // 6. Gentle vignette toward the edges.
+        // 5. Gentle vignette toward the edges.
         if let g = CGGradient(colorsSpace: space, colors: [color(0, 0), color(0, 0.10)] as CFArray, locations: [0.55, 1]) {
             let c = CGPoint(x: size.width * 0.4, y: size.height * 0.25)
             ctx.drawRadialGradient(g, startCenter: c, startRadius: 0, endCenter: c, endRadius: max(size.width, size.height) * 0.75,

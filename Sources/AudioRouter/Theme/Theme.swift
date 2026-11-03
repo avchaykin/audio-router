@@ -53,7 +53,7 @@ enum ThemeStore {
     ]
 }
 
-/// Window skin: dark frosted glass, or light scratched anodized aluminium.
+/// Window skin: dark frosted glass, or light, scratched bead-blasted aluminium.
 enum Skin: Int, CaseIterable, Identifiable {
     case glass, aluminum
     var id: Int { rawValue }

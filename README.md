@@ -18,7 +18,7 @@ Typical uses:
 
 <p align="center">
   <img src="docs/main.png" alt="Main window, Dark Glass skin: input and output selection, virtual device, effect chain, dry/wet mix and output gain" width="900"><br>
-  <img src="docs/aluminium.png" alt="The same window with the Aluminium skin: scratched, brushed anodized aluminium" width="900">
+  <img src="docs/aluminium.png" alt="The same window with the Aluminium skin: scratched, bead-blasted anodized aluminium (MacBook-like)" width="900">
 </p>
 
 ## Features
@@ -45,7 +45,7 @@ Typical uses:
   - Live estimate of the total latency, with its breakdown, and a dropout counter.
 - **Looks:** two skins, switched in Settings → Appearance:
   - **Dark Glass:** a frosted-glass dark UI with "rubber" keys, shared with [MIDI Filter](https://github.com/avchaykin/midi-filter).
-  - **Aluminium:** a light skin on scratched, brushed anodized aluminium, with machined recessed panels.
+  - **Aluminium:** a light skin on scratched, bead-blasted anodized aluminium (MacBook-like), with machined recessed panels.
 
   In both you can set the glow colour and intensity, and a backlight "bulb" (colour, shape, blur and intensity). Dark Glass also has a glass opacity setting.
 
