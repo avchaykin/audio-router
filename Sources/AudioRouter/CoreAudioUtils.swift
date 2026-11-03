@@ -78,7 +78,8 @@ struct AudioDevice: Identifiable, Hashable {
         var ids = [AudioDeviceID](repeating: 0, count: Int(size) / MemoryLayout<AudioDeviceID>.size)
         guard AudioObjectGetPropertyData(system, &address, 0, nil, &size, &ids) == noErr else { return [] }
         return ids.compactMap { id in
-            guard let uid = try? deviceUID(id) else { return nil }
+            // Skip system-generated helper aggregates (e.g. the one AVAudioEngine creates).
+            guard let uid = try? deviceUID(id), !uid.hasPrefix("CADefaultDeviceAggregate") else { return nil }
             return AudioDevice(id: id, uid: uid, name: deviceName(id),
                                inputChannels: channelCount(id, scope: kAudioObjectPropertyScopeInput),
                                outputChannels: channelCount(id, scope: kAudioObjectPropertyScopeOutput))

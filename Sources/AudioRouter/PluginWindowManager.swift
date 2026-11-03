@@ -45,6 +45,7 @@ final class PluginWindowManager: NSObject, NSWindowDelegate {
                               backing: .buffered, defer: false)
         window.title = "\(slot.name) — \(slot.manufacturer)"
         window.isReleasedWhenClosed = false
+        window.appearance = NSAppearance(named: .darkAqua)
         window.contentViewController = controller
         window.setContentSize(size)
         window.delegate = self

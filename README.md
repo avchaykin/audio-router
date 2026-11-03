@@ -49,3 +49,8 @@ The app is ad-hoc signed, so after a rebuild macOS may ask again.
         └► dry source node (delayed by plug-in latency) ─► dry mixer ─┴► main mixer (gain) ─► output
 
 Debug: `open "build.nosync/Audio Router.app" --args --autostart --log /path/levels.log` logs peak levels every 0.5 s.
+
+## Design
+
+The UI shares the look of MIDI Filter (`Sources/AudioRouter/Theme/Theme.swift`): frosted dark glass,
+glowing rubber keys with a warm bulb backlight, violet accent. Font: JetBrains Mono (SIL OFL, `Resources/Fonts/OFL.txt`).

@@ -190,6 +190,13 @@ final class AudioRouter: ObservableObject {
         start()
     }
 
+    var inputSummary: String { inputName }
+
+    var outputSummary: String {
+        guard let outputUID else { return "System Default" }
+        return devices.first(where: { $0.uid == outputUID })?.name ?? "Unavailable"
+    }
+
     private var inputName: String {
         switch inputSource {
         case .systemAudio: "System audio"
