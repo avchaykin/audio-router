@@ -26,6 +26,12 @@ final class PluginWindowManager: NSObject, NSWindowDelegate {
         windows[slot.id] = nil
     }
 
+    func closeAll() {
+        let all = windows.values
+        windows.removeAll()
+        all.forEach { $0.close() }
+    }
+
     private func genericController(for slot: EffectSlot) -> NSViewController {
         let controller = NSViewController()
         let view = AUGenericView(audioUnit: slot.unit.audioUnit)

@@ -566,6 +566,13 @@ final class AudioRouter: ObservableObject {
             MainActor.assumeIsolated {
                 self?.saveChain()
                 self?.stop()
+                PluginWindowManager.shared.closeAll()
+                // Some plug-ins crash in their own C++ static destructors when the process exits
+                // (e.g. Arturia Rev INTENSITY calls std::terminate), which macOS then reports as an
+                // unexpected quit. Everything worth keeping is saved and audio is stopped, so end the
+                // process here without running library destructors.
+                UserDefaults.standard.synchronize()
+                _exit(0)
             }
         })
 
