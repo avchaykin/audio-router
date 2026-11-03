@@ -17,7 +17,7 @@ struct AudioRouterApp: App {
                 .environmentObject(look)
         }
         .windowStyle(.hiddenTitleBar)
-        .defaultSize(width: 980, height: 640)
+        .windowResizability(.contentSize)   // the window follows the content (no empty space)
 
         Settings {
             SettingsView()
@@ -40,16 +40,18 @@ struct ContentView: View {
                 VStack(spacing: 12) {
                     InputSection()
                     OutputSection()
-                    VirtualDeviceSection()
-                    Spacer(minLength: 0)
+                    VirtualDeviceSection()   // stretches when the right column is taller
                 }
                 .frame(width: 300)
 
                 VStack(spacing: 12) {
-                    ChainSection()
+                    ChainSection()           // stretches when the left column is taller
                     MixSection()
                 }
+                .frame(width: 560)
             }
+            // Height = the taller column's natural height; the other column stretches to match.
+            .fixedSize(horizontal: false, vertical: true)
 
             StatusBar()
         }
@@ -57,7 +59,6 @@ struct ContentView: View {
         .padding(.bottom, 12)
         .padding(.top, 6)
         .ignoresSafeArea(edges: .top)
-        .frame(minWidth: 880, minHeight: 560)
         .font(Theme.mono(11.5))
         .foregroundStyle(Theme.text)
         .id(look.themeVersion)   // redraw everything when the appearance changes
@@ -217,6 +218,7 @@ struct VirtualDeviceSection: View {
                     .foregroundStyle(Theme.textFaint)
                     .fixedSize(horizontal: false, vertical: true)
             }
+            .frame(maxHeight: .infinity, alignment: .top)
         }
     }
 }
@@ -227,6 +229,10 @@ struct ChainSection: View {
     @EnvironmentObject private var router: AudioRouter
     @StateObject private var showAdd = LocalState(false)
     @StateObject private var dragging = LocalState<UUID?>(nil)
+    @StateObject private var listHeight = LocalState<CGFloat>(0)
+
+    /// The list grows with its rows up to this height, then scrolls.
+    private let maxListHeight: CGFloat = 6 * 50 + 16
 
     var body: some View {
         Panel(title: "Effect Chain · \(router.slots.count)", icon: "square.stack.3d.up") {
@@ -252,7 +258,7 @@ struct ChainSection: View {
                 Text("add an Audio Unit effect to start processing")
                     .font(Theme.mono(11))
                     .foregroundStyle(Theme.textFaint)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .frame(maxWidth: .infinity, minHeight: 64, idealHeight: 64, maxHeight: .infinity)
                     .background(RoundedRectangle(cornerRadius: 8).fill(Color.black.opacity(0.28)))
             } else {
                 ScrollView {
@@ -268,13 +274,23 @@ struct ChainSection: View {
                         }
                     }
                     .padding(8)
+                    .background(GeometryReader { g in
+                        Color.clear.preference(key: ListHeightKey.self, value: g.size.height)
+                    })
                 }
-                .scrollIndicators(.never)
+                .onPreferenceChange(ListHeightKey.self) { listHeight.value = $0 }
+                .scrollIndicators(.automatic)
+                .frame(minHeight: 64, idealHeight: min(max(listHeight.value, 64), maxListHeight), maxHeight: .infinity)
                 .background(RoundedRectangle(cornerRadius: 8).fill(Color.black.opacity(0.28)))
             }
         }
         .frame(maxHeight: .infinity)
     }
+}
+
+private struct ListHeightKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) { value = max(value, nextValue()) }
 }
 
 /// Moves the dragged slot to the drop target's position (one rewire per drop).
