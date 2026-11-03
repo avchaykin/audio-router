@@ -26,5 +26,7 @@ cp "$BIN" "$APP/Contents/MacOS/AudioRouter"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 cp -R "$DRV" "$APP/Contents/Resources/"
 cp -R Resources/Fonts "$APP/Contents/Resources/Fonts"
+[ -f Resources/AppIcon.icns ] || swift scripts/make-icon.swift
+cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 codesign --force --sign - "$APP"
 echo "Built: $PWD/$APP"
